@@ -2,6 +2,8 @@ use miniconf::MiniconfAtomic;
 use serde::{Deserialize, Serialize};
 
 use super::{abs, copysign, macc};
+use core::f32::consts::PI;
+use libm::{cos, tan};
 use core::iter::Sum;
 use num_traits::{clamp, Float, NumCast};
 
@@ -73,6 +75,14 @@ impl<T: Float + Default + Sum<T>> IIR<T> {
         }
     }
 
+    /// Configures IIR filter coefficients for a trivial pass-through response
+    /// with the given scaling factor.
+    pub fn set_scale(&mut self, gain: T) -> Result<(), &str> {
+        let zero: T = T::default();
+        self.ba.copy_from_slice(&[gain, zero, zero, zero, zero]);
+        Ok(())
+    }
+
     /// Configures IIR filter coefficients for proportional-integral behavior
     /// with gain limit.
     ///
@@ -104,6 +114,33 @@ impl<T: Float + Default + Sum<T>> IIR<T> {
             (a1, b0, b1)
         };
         self.ba.copy_from_slice(&[b0, b1, zero, a1, zero]);
+        Ok(())
+    }
+
+    /// Configures IIR filter coefficients for notch filter behaviour.
+    ///
+    /// # Arguments
+    ///
+    /// * `f0` - Center frequency, in units of half the sample frequency.
+    /// * `q` - Filter quality factor.
+    pub fn set_notch(&mut self, f0: T, q: T) -> Result<(), &str> {
+        let zero: T = T::default();
+        let one: T = NumCast::from(1.0).unwrap();
+        let two: T = NumCast::from(2.0).unwrap();
+        let pi: T = NumCast::from(PI).unwrap();
+
+        // IIR notch design as per scipy.signals/Orfandis (1996), p. 575 ff.
+        if f0 < zero || f0 > one {
+            return Err("Frequency out of bounds 0 < f0 < 1.0");
+        }
+        let w0 = pi * f0;
+        let bw = w0 / q;
+        let beta: T = NumCast::from(tan(NumCast::from(bw / two).unwrap())).unwrap();
+        let gain = one / (one + beta);
+        let c: T = NumCast::from(cos(NumCast::from(w0).unwrap())).unwrap();
+        let pf = two * c;
+        self.ba
+            .copy_from_slice(&[one, -pf, one, gain * pf, one - two * gain]);
         Ok(())
     }
 
